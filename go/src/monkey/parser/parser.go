@@ -9,11 +9,30 @@ import (
 	"monkey/token"
 )
 
+const (
+	_ int = iota // gives constants incrementing numbers as vals (i.e. 1...)
+	LOWEST
+	EQUALS      // ==
+	LESSGREATER // > OR <
+	SUM         // +
+	PRODUCT     // *
+	PREFIX      // -x or !x
+	CALL        // myFunction(x)
+)
+
+type (
+	prefixParserFn func() ast.Expression               // e.g -5
+	infixParserFn  func(ast.Expression) ast.Expression // fn arg is left side of 5 + 5;
+)
+
 type Parser struct {
 	l         *lexer.Lexer
 	currToken token.Token
 	peekToken token.Token
 	errors    []string
+
+	prefixParseFns map[token.TokenType]prefixParserFn
+	infixParseFns  map[token.TokenType]infixParserFn
 }
 
 func New(l *lexer.Lexer) *Parser {
@@ -26,9 +45,15 @@ func New(l *lexer.Lexer) *Parser {
 	p.nextToken()
 	p.nextToken()
 
+	p.prefixParseFns = make(map[token.TokenType]prefixParserFn)
+	p.registerPrefix(token.IDENT, p.parseIdentifier) // set parsing function for identifier type
+
 	return p
 }
 
+func (p *Parser) parseIdentifier() ast.Expression {
+	return &ast.Identifier{Token: p.currToken, Value: p.currToken.Literal}
+}
 func (p *Parser) Errors() []string {
 	return p.errors
 }
@@ -67,7 +92,7 @@ func (p *Parser) parseStatement() ast.Statement {
 	case token.RETURN:
 		return p.parseReturnStatement()
 	default:
-		return nil
+		return p.parseExpressionStatement()
 	}
 }
 
@@ -103,6 +128,24 @@ func (p *Parser) parseReturnStatement() *ast.ReturnStatement {
 	return stmt
 }
 
+func (p *Parser) parseExpressionStatement() *ast.ExpressionStatement {
+	stmt := &ast.ExpressionStatement{Token: p.currToken}
+	stmt.Expression = p.parseExpression(LOWEST)
+	if p.peekTokenIs(token.SEMICOLON) {
+		p.nextToken()
+	}
+	return stmt
+}
+
+func (p *Parser) parseExpression(precedence int) ast.Expression {
+	prefix := p.prefixParseFns[p.currToken.Type]
+	if prefix == nil {
+		return nil
+	}
+	leftExp := prefix() // execute parsing function
+	return leftExp
+}
+
 func (p *Parser) currTokenIs(tt token.TokenType) bool {
 	return p.currToken.Type == tt
 }
@@ -120,4 +163,13 @@ func (p *Parser) expectPeek(tt token.TokenType) bool {
 	}
 	p.peekError(tt)
 	return false
+}
+
+// Helper methods to add parserfn map entries
+func (p *Parser) registerPrefix(tt token.TokenType, fn prefixParserFn) {
+	p.prefixParseFns[tt] = fn
+}
+
+func (p *Parser) registerInfix(tt token.TokenType, fn infixParserFn) {
+	p.infixParseFns[tt] = fn
 }
